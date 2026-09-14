@@ -66,6 +66,24 @@ function s365_bos_donut( $rows ) {
 		. $segs . '</svg><ul class="donut-legend">' . $legend . '</ul></div>';
 }
 
+/** A horizontal stage rail: nodes filled up to (and including) $index. */
+function s365_bos_stage_rail( $stages, $index, $over = false ) {
+	$out = '<div class="rail">';
+	foreach ( $stages as $i => $label ) {
+		$cls = $i < $index ? 'done' : ( $i === $index ? 'current' : 'todo' );
+		if ( $i === $index && $over ) {
+			$cls .= ' over';
+		}
+		$out .= '<div class="node ' . $cls . '">';
+		if ( $i > 0 ) {
+			$out .= '<span class="seg ' . ( $i <= $index ? 'fill' : '' ) . '"></span>';
+		}
+		$out .= '<span class="dot"></span><span class="lbl">' . esc_html( $label ) . '</span></div>';
+	}
+	$out .= '</div>';
+	return $out;
+}
+
 /** Render the full page and echo it. */
 function s365_bos_render_page( $data ) {
 	$cur     = isset( $data['currency'] ) ? $data['currency'] : '£';
@@ -84,8 +102,11 @@ function s365_bos_render_page( $data ) {
 
 	$tabs = array(
 		'overview'  => 'Overview',
+		'timeline'  => 'Timeline',
 		'risk'      => 'Delivery risk',
 		'leads'     => 'Leads',
+		'samples'   => 'Samples → sales',
+		'growth'    => 'Growth',
 		'analytics' => 'Analytics',
 		'margin'    => 'Margin',
 		'vendor'    => 'Vendor',
@@ -223,8 +244,56 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .note{font-size:12px;color:var(--slate-2);margin-top:10px;font-style:italic}
 footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:center}
 
-@media (max-width:1080px){ .kpis{grid-template-columns:repeat(3,1fr)} .g-2,.g-2e{grid-template-columns:1fr} }
-@media (max-width:640px){ .kpis{grid-template-columns:repeat(2,1fr)} .bar-row{grid-template-columns:110px 1fr auto} .pipe-row{grid-template-columns:96px 1fr 40px} }
+/* insights strip */
+.insights{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}
+.insight{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--slate-2);border-radius:var(--r-sm);padding:13px 15px;box-shadow:var(--shadow);font-size:13.5px;color:var(--ink);display:flex;gap:10px;align-items:flex-start}
+.insight .ic{font-size:15px;flex:0 0 auto}
+.insight.good{border-left-color:var(--green)} .insight.bad{border-left-color:var(--red)}
+.insight.warn{border-left-color:var(--amber)} .insight.info{border-left-color:var(--steel)}
+.insight.opp{border-left-color:var(--brand);background:#fdf7f6}
+
+/* stage rail (timeline) */
+.rail{display:flex;align-items:flex-start}
+.rail .node{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;position:relative;min-width:0}
+.rail .seg{position:absolute;top:6px;left:-50%;width:100%;height:2px;background:var(--line);z-index:0}
+.rail .seg.fill{background:var(--green)}
+.rail .dot{width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid var(--line);z-index:1}
+.rail .node.done .dot{background:var(--green);border-color:var(--green)}
+.rail .node.current .dot{width:16px;height:16px;background:var(--brand);border-color:var(--brand);box-shadow:0 0 0 4px rgba(194,38,31,.15)}
+.rail .node.current.over .dot{background:var(--red);border-color:var(--red);box-shadow:0 0 0 4px rgba(163,32,26,.18)}
+.rail .lbl{font-size:9.5px;line-height:1.15;text-align:center;color:var(--slate-2);white-space:nowrap}
+.rail .node.done .lbl,.rail .node.current .lbl{color:var(--ink);font-weight:600}
+.tl-row{display:grid;grid-template-columns:210px 1fr;gap:18px;align-items:center;padding:15px 4px;border-bottom:1px solid var(--line-2)}
+.tl-row:last-child{border-bottom:0}
+.tl-meta .oid{font-weight:700;font-size:14px}
+.tl-meta .oid .v{color:var(--slate-2);font-weight:600;font-size:12px;margin-left:6px}
+.tl-meta .cust{font-size:13px;color:var(--slate)}
+.tl-meta .rcv{font-size:11.5px;color:var(--slate-2)}
+.tl-cap{font-size:11.5px;color:var(--slate-2);margin-top:8px;text-align:center}
+.tl-cap .over{color:var(--red);font-weight:700}
+
+/* conversion stats */
+.conv-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
+.conv{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;box-shadow:var(--shadow)}
+.conv b{display:block;font-size:26px;font-weight:800;letter-spacing:-.02em}
+.conv span{font-size:12px;color:var(--slate-2);text-transform:uppercase;letter-spacing:.05em}
+.conv.hi b{color:var(--green)}
+
+/* growth / nudges */
+.opp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
+.opp-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px 17px;box-shadow:var(--shadow);border-top:3px solid var(--brand)}
+.opp-card.q{border-top-color:var(--steel)} .opp-card.s{border-top-color:var(--amber)} .opp-card.r{border-top-color:var(--green)}
+.opp-card b{display:block;font-size:24px;font-weight:800;letter-spacing:-.01em}
+.opp-card .t{font-size:13px;color:var(--ink);font-weight:600;margin-top:2px}
+.opp-card .d{font-size:12px;color:var(--slate-2);margin-top:4px}
+.ntype{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:3px 8px;border-radius:6px;white-space:nowrap}
+.ntype.sample{background:var(--amber-bg);color:var(--amber)}
+.ntype.quote{background:#e8eff3;color:var(--steel)}
+.ntype.repeat{background:var(--green-bg);color:var(--green)}
+.act{font-size:13px;color:var(--slate)}
+
+@media (max-width:1080px){ .kpis{grid-template-columns:repeat(3,1fr)} .g-2,.g-2e{grid-template-columns:1fr} .insights,.opp-grid{grid-template-columns:1fr} .conv-grid{grid-template-columns:repeat(2,1fr)} }
+@media (max-width:640px){ .kpis{grid-template-columns:repeat(2,1fr)} .bar-row{grid-template-columns:110px 1fr auto} .pipe-row{grid-template-columns:96px 1fr 40px} .tl-row{grid-template-columns:1fr;gap:10px} .rail .lbl{font-size:8px} }
 </style>
 </head>
 <body>
@@ -268,6 +337,17 @@ footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:cent
       <div class="kpi"><div class="lab">New leads</div><div class="num tnum"><?php echo esc_html( $data['leads']['this_month'] ); ?></div><div class="sub">this month</div></div>
       <div class="kpi"><div class="lab">Gross margin</div><div class="num tnum"><?php echo esc_html( round( $data['margin']['gross_pct'] ) ); ?>%</div><div class="sub"><?php echo $data['margin']['estimated'] ? 'estimated' : 'actual'; ?></div></div>
     </div>
+    <?php if ( ! empty( $data['insights']['rows'] ) ) : ?>
+    <div class="insights">
+      <?php
+      $ins_icons = array( 'good' => '▲', 'bad' => '▼', 'warn' => '⚠', 'info' => '›', 'opp' => '★' );
+      foreach ( $data['insights']['rows'] as $ins ) :
+        $tone = isset( $ins['tone'] ) ? $ins['tone'] : 'info';
+      ?>
+        <div class="insight <?php echo esc_attr( $tone ); ?>"><span class="ic"><?php echo esc_html( isset( $ins_icons[ $tone ] ) ? $ins_icons[ $tone ] : '›' ); ?></span><span><?php echo esc_html( $ins['text'] ); ?></span></div>
+      <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
     <div class="card mt">
       <div class="card-h"><h3>Order pipeline</h3><?php echo s365_bos_badge( $data['pipeline']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
       <?php
@@ -284,6 +364,29 @@ footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:cent
       echo '</div>';
       ?>
       <p class="note">Live from WooCommerce order statuses — Design → Manufacturing → In transit → With courier → Delivered.</p>
+    </div>
+  </section>
+
+  <!-- TIMELINE -->
+  <section class="panel" id="tab-timeline" role="tabpanel" hidden>
+    <div class="panel-h"><h2>Order timeline</h2><span class="sub">every shutter order and the stage it’s moved into</span><?php echo s365_bos_badge( $data['timeline']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+    <div class="card">
+      <?php foreach ( $data['timeline']['rows'] as $r ) : ?>
+        <div class="tl-row">
+          <div class="tl-meta">
+            <div class="oid">#<?php echo esc_html( $r['id'] ); ?><span class="v"><?php echo esc_html( s365_bos_money( $r['total'], $cur ) ); ?></span></div>
+            <div class="cust"><?php echo esc_html( $r['customer'] ? $r['customer'] : '—' ); ?></div>
+            <div class="rcv">received <?php echo esc_html( date_i18n( 'j M', $r['received'] ) ); ?> · day <?php echo esc_html( $r['days'] ); ?></div>
+          </div>
+          <div>
+            <?php echo s365_bos_stage_rail( $data['timeline']['stages'], (int) $r['stage'], ! empty( $r['over'] ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+            <div class="tl-cap">
+              <?php if ( (int) $r['stage'] >= 6 ) : ?>Delivered<?php else : ?>In <b><?php echo esc_html( $r['label'] ); ?></b> for <?php echo esc_html( $r['days_in'] ); ?>d<?php if ( ! empty( $r['over'] ) ) : ?> · <span class="over">overdue</span><?php endif; ?><?php endif; ?>
+            </div>
+          </div>
+        </div>
+      <?php endforeach; ?>
+      <p class="note">Stage is live from each order’s WooCommerce status; exact per-stage dates arrive with the Phase 2 stage timestamps.</p>
     </div>
   </section>
 
@@ -345,6 +448,64 @@ footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:cent
           </tbody>
         </table>
       </div>
+    </div>
+  </section>
+
+  <!-- SAMPLES -> SALES -->
+  <section class="panel" id="tab-samples" role="tabpanel" hidden>
+    <div class="panel-h"><h2>Samples → sales</h2><span class="sub">which sample customers went on to buy</span><?php echo s365_bos_badge( $data['conversions']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+    <div class="conv-grid">
+      <div class="conv"><b class="tnum"><?php echo esc_html( $data['conversions']['sample_customers'] ); ?></b><span>sample customers</span></div>
+      <div class="conv hi"><b class="tnum"><?php echo esc_html( $data['conversions']['converted'] ); ?></b><span>converted to buyers</span></div>
+      <div class="conv"><b class="tnum"><?php echo esc_html( round( $data['conversions']['rate'] ) ); ?>%</b><span>conversion rate</span></div>
+      <div class="conv"><b class="tnum"><?php echo esc_html( s365_bos_money( $data['conversions']['revenue'], $cur ) ); ?></b><span>revenue from converts</span></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><h3>Sample customers who became buyers</h3></div>
+      <table>
+        <thead><tr><th>Customer</th><th>Email</th><th>Full order</th><th class="num">Order value</th><th class="num">Days to buy</th></tr></thead>
+        <tbody>
+        <?php foreach ( $data['conversions']['rows'] as $r ) : ?>
+          <tr>
+            <td><?php echo esc_html( $r['name'] ? $r['name'] : '—' ); ?></td>
+            <td><?php echo esc_html( $r['email'] ); ?></td>
+            <td>#<?php echo esc_html( $r['order'] ); ?></td>
+            <td class="num tnum"><?php echo esc_html( s365_bos_money( $r['total'], $cur ) ); ?></td>
+            <td class="num tnum"><?php echo esc_html( $r['days'] ); ?>d</td>
+          </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+      <p class="note"><?php echo esc_html( $data['conversions']['open'] ); ?> sample customers haven’t ordered yet — they’re in the Growth tab as nudge targets.</p>
+    </div>
+  </section>
+
+  <!-- GROWTH -->
+  <section class="panel" id="tab-growth" role="tabpanel" hidden>
+    <div class="panel-h"><h2>Growth &amp; nudges</h2><span class="sub">upsell opportunities and customers worth a nudge</span><?php echo s365_bos_badge( $data['nudges']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+    <?php $ns = $data['nudges']['summary']; ?>
+    <div class="opp-grid">
+      <div class="opp-card q"><b class="tnum"><?php echo esc_html( s365_bos_money( $ns['quotes_value'], $cur ) ); ?></b><div class="t"><?php echo esc_html( $ns['quotes'] ); ?> quotes not yet ordered</div><div class="d">Follow up before they go cold.</div></div>
+      <div class="opp-card s"><b class="tnum"><?php echo esc_html( $ns['samples'] ); ?></b><div class="t">samples awaiting purchase</div><div class="d">Nudge to finish the order.</div></div>
+      <div class="opp-card r"><b class="tnum"><?php echo esc_html( $ns['repeat'] ); ?></b><div class="t">past customers for repeat / referral</div><div class="d">Ask for the next room or a review.</div></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><h3>Customers to nudge</h3></div>
+      <table>
+        <thead><tr><th>Customer</th><th>Email</th><th>Why</th><th>Suggested action</th><th class="num">Type</th></tr></thead>
+        <tbody>
+        <?php foreach ( $data['nudges']['rows'] as $r ) : ?>
+          <tr>
+            <td><?php echo esc_html( $r['name'] ); ?></td>
+            <td><?php echo esc_html( $r['email'] ); ?></td>
+            <td><?php echo esc_html( $r['reason'] ); ?></td>
+            <td class="act"><?php echo esc_html( $r['action'] ); ?></td>
+            <td class="num"><span class="ntype <?php echo esc_attr( $r['type'] ); ?>"><?php echo esc_html( $r['type'] ); ?></span></td>
+          </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+      <p class="note">Built from unconverted quotes, sample requests and delivered one-off buyers. One-click email will come with the Phase 3 follow-up sequences.</p>
     </div>
   </section>
 

@@ -61,7 +61,7 @@ function s365_bos_maybe_render() {
 	// Optional cache-buster for a fresh pull.
 	$force = isset( $_GET['refresh'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 	if ( $force ) {
-		delete_transient( 's365_bos_payload_v2' );
+		delete_transient( 's365_bos_payload_v3' );
 	}
 
 	$data = s365_bos_payload( $force );

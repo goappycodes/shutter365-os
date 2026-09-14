@@ -60,7 +60,7 @@ function s365_bos_stage_sla() {
  * the loader) to rebuild.
  */
 function s365_bos_payload( $force = false ) {
-	$key = 's365_bos_payload_v2';
+	$key = 's365_bos_payload_v3';
 	if ( ! $force ) {
 		$cached = get_transient( $key );
 		if ( is_array( $cached ) ) {
@@ -81,11 +81,23 @@ function s365_bos_build() {
 
 	$orders = s365_bos_window_orders( $window_start );
 
-	$kpis     = s365_bos_kpis( $orders, $month_start, $prev_start, $now );
-	$products = s365_bos_top_products( $orders );
-	$customers = s365_bos_top_customers( $orders );
-	$cities   = s365_bos_cities( $orders );
-	$margin   = s365_bos_margin( $orders, $month_start );
+	$kpis        = s365_bos_kpis( $orders, $month_start, $prev_start, $now );
+	$pipeline    = s365_bos_pipeline();
+	$timeline    = s365_bos_timeline();
+	$conversions = s365_bos_sample_conversions( $orders );
+	$delayed     = s365_bos_delayed_orders();
+	$leads       = s365_bos_leads( $month_start );
+	$products    = s365_bos_top_products( $orders );
+	$materials   = s365_bos_materials_split( $orders );
+	$customers   = s365_bos_top_customers( $orders );
+	$cities      = s365_bos_cities( $orders );
+	$margin      = s365_bos_margin( $orders, $month_start );
+	$vendor      = s365_bos_vendor_ledger( $margin );
+	$support     = s365_bos_support();
+
+	// Derived, cross-section intelligence.
+	$nudges   = s365_bos_nudges( $orders, $conversions, $kpis );
+	$insights = s365_bos_insights( compact( 'kpis', 'conversions', 'delayed', 'cities', 'products', 'nudges', 'margin' ) );
 
 	$currency = function_exists( 'get_woocommerce_currency_symbol' ) ? get_woocommerce_currency_symbol() : '£';
 
@@ -93,17 +105,21 @@ function s365_bos_build() {
 		'generated'    => $now,
 		'report_start' => $window_start,
 		'currency'     => $currency,
-		'kpis'       => $kpis,
-		'pipeline'   => s365_bos_pipeline(),
-		'delayed'    => s365_bos_delayed_orders(),
-		'leads'      => s365_bos_leads( $month_start ),
-		'products'   => $products,
-		'materials'  => s365_bos_materials_split( $orders ),
-		'customers'  => $customers,
-		'cities'     => $cities,
-		'margin'     => $margin,
-		'vendor'     => s365_bos_vendor_ledger( $margin ),
-		'support'    => s365_bos_support(),
+		'kpis'         => $kpis,
+		'insights'     => $insights,
+		'pipeline'     => $pipeline,
+		'timeline'     => $timeline,
+		'conversions'  => $conversions,
+		'nudges'       => $nudges,
+		'delayed'      => $delayed,
+		'leads'        => $leads,
+		'products'     => $products,
+		'materials'    => $materials,
+		'customers'    => $customers,
+		'cities'       => $cities,
+		'margin'       => $margin,
+		'vendor'       => $vendor,
+		'support'      => $support,
 	);
 }
 
@@ -611,6 +627,309 @@ function s365_bos_vendor_ledger( $margin ) {
 		'outstanding' => $outstanding,
 		'paid'        => $paid,
 	);
+}
+
+/**
+ * Per-order fulfilment timeline: every shutter order, one row, showing which
+ * stage it has moved into. Received → Paid → Design → Manufacturing → In transit
+ * → With courier → Delivered.
+ */
+function s365_bos_timeline() {
+	$map = array(
+		'pending'      => 0,
+		'on-hold'      => 0,
+		'processing'   => 1,
+		's365-design'  => 2,
+		's365-mfg'     => 3,
+		's365-transit' => 4,
+		's365-courier' => 5,
+		'completed'    => 6,
+	);
+	$stages = array( 'Received', 'Paid', 'Design', 'Manufacturing', 'In transit', 'With courier', 'Delivered' );
+	$sla    = s365_bos_stage_sla();
+	$now    = current_time( 'timestamp' );
+	$rows   = array();
+
+	if ( function_exists( 'wc_get_orders' ) ) {
+		$orders = wc_get_orders( array(
+			'limit'        => 40,
+			'type'         => 'shop_order',
+			'orderby'      => 'date',
+			'order'        => 'DESC',
+			'date_created' => '>=' . s365_bos_report_start(),
+			'status'       => array_keys( $map ),
+		) );
+		foreach ( (array) $orders as $o ) {
+			if ( function_exists( 's365_order_has_shutter' ) && ! s365_order_has_shutter( $o ) ) {
+				continue;
+			}
+			$st = $o->get_status();
+			if ( ! isset( $map[ $st ] ) ) {
+				continue;
+			}
+			$idx      = $map[ $st ];
+			$created  = $o->get_date_created() ? $o->get_date_created()->getTimestamp() : $now;
+			$modified = $o->get_date_modified() ? $o->get_date_modified()->getTimestamp() : $created;
+			$expected = isset( $sla[ $st ] ) ? $sla[ $st ]['days'] : null;
+			$days_in  = (int) floor( ( $now - $modified ) / DAY_IN_SECONDS );
+			$rows[]   = array(
+				'id'       => $o->get_id(),
+				'customer' => trim( $o->get_billing_first_name() . ' ' . $o->get_billing_last_name() ),
+				'received' => $created,
+				'stage'    => $idx,
+				'label'    => $stages[ $idx ],
+				'days'     => (int) floor( ( $now - $created ) / DAY_IN_SECONDS ),
+				'days_in'  => $days_in,
+				'over'     => ( null !== $expected && 'completed' !== $st && $days_in > $expected ),
+				'total'    => (float) $o->get_total(),
+			);
+		}
+	}
+
+	$sample = empty( $rows );
+	if ( $sample ) {
+		$mk = function ( $id, $c, $stage, $days, $din, $over, $total ) use ( $stages, $now ) {
+			return array( 'id' => $id, 'customer' => $c, 'received' => $now - $days * DAY_IN_SECONDS, 'stage' => $stage, 'label' => $stages[ $stage ], 'days' => $days, 'days_in' => $din, 'over' => $over, 'total' => $total );
+		};
+		$rows = array(
+			$mk( 1492, 'Hannah Brookes', 1, 4, 4, false, 2140 ),
+			$mk( 1489, 'Daniel Reid', 2, 9, 5, false, 1760 ),
+			$mk( 1482, 'James Okafor', 3, 81, 81, true, 2340 ),
+			$mk( 1475, 'Sophie Whitfield', 4, 52, 8, true, 1890 ),
+			$mk( 1470, 'Rajan Mehta', 5, 96, 6, false, 1120 ),
+			$mk( 1463, 'Ellie Fraser', 6, 120, 14, false, 3240 ),
+			$mk( 1458, 'Tom Bradley', 2, 6, 6, true, 2870 ),
+		);
+	}
+	return array( 'sample' => $sample, 'stages' => $stages, 'rows' => array_slice( $rows, 0, 25 ) );
+}
+
+/**
+ * Sample → buyer conversion: which sample customers went on to place a full
+ * shutter order. Uses s365_is_samples_only_order() + s365_order_has_shutter().
+ */
+function s365_bos_sample_conversions( $orders ) {
+	$samples = array(); // email => ['name','date']
+	$buys    = array(); // email => ['id','date','total','name']
+	foreach ( $orders as $o ) {
+		$email = strtolower( (string) $o->get_billing_email() );
+		if ( ! $email ) {
+			continue;
+		}
+		$created = $o->get_date_created() ? $o->get_date_created()->getTimestamp() : 0;
+		$name    = trim( $o->get_billing_first_name() . ' ' . $o->get_billing_last_name() );
+		if ( function_exists( 's365_is_samples_only_order' ) && s365_is_samples_only_order( $o ) ) {
+			if ( ! isset( $samples[ $email ] ) || $created < $samples[ $email ]['date'] ) {
+				$samples[ $email ] = array( 'name' => $name, 'date' => $created );
+			}
+		}
+		if ( function_exists( 's365_order_has_shutter' ) && s365_order_has_shutter( $o ) ) {
+			if ( ! isset( $buys[ $email ] ) || $created < $buys[ $email ]['date'] ) {
+				$buys[ $email ] = array( 'id' => $o->get_id(), 'date' => $created, 'total' => (float) $o->get_total(), 'name' => $name );
+			}
+		}
+	}
+	$rows = array(); $open_rows = array(); $rev = 0.0; $converted = 0;
+	$now  = current_time( 'timestamp' );
+	foreach ( $samples as $email => $s ) {
+		if ( isset( $buys[ $email ] ) && $buys[ $email ]['date'] >= $s['date'] ) {
+			$converted++;
+			$rev   += $buys[ $email ]['total'];
+			$days   = $s['date'] ? max( 0, (int) floor( ( $buys[ $email ]['date'] - $s['date'] ) / DAY_IN_SECONDS ) ) : 0;
+			$rows[] = array( 'name' => $s['name'] ? $s['name'] : $buys[ $email ]['name'], 'email' => $email, 'order' => $buys[ $email ]['id'], 'total' => $buys[ $email ]['total'], 'days' => $days );
+		} else {
+			$since       = $s['date'] ? (int) floor( ( $now - $s['date'] ) / DAY_IN_SECONDS ) : 0;
+			$open_rows[] = array( 'name' => $s['name'], 'email' => $email, 'since' => $since );
+		}
+	}
+	usort( $rows, function ( $a, $b ) {
+		return $b['total'] <=> $a['total'];
+	} );
+	$total = count( $samples );
+	$rate  = $total ? ( $converted / $total ) * 100 : 0;
+
+	$sample = ( 0 === $total );
+	if ( $sample ) {
+		$total = 41; $converted = 12; $rate = 29.3; $rev = 14280;
+		$rows = array(
+			array( 'name' => 'Ellie Fraser', 'email' => 'ellie•••@gmail.com', 'order' => 1463, 'total' => 3240, 'days' => 9 ),
+			array( 'name' => 'Tom Bradley', 'email' => 'tomb•••@gmail.com', 'order' => 1458, 'total' => 2870, 'days' => 33 ),
+			array( 'name' => 'James Okafor', 'email' => 'j.okafor•••@outlook.com', 'order' => 1482, 'total' => 2340, 'days' => 21 ),
+			array( 'name' => 'Sophie Whitfield', 'email' => 'sophie•••@gmail.com', 'order' => 1475, 'total' => 1890, 'days' => 12 ),
+		);
+		$open_rows = array(
+			array( 'name' => 'Priya Shah', 'email' => 'priya•••@gmail.com', 'since' => 6 ),
+			array( 'name' => 'Mark Ellis', 'email' => 'mark•••@gmail.com', 'since' => 19 ),
+		);
+	}
+	return array(
+		'sample'           => $sample,
+		'sample_customers' => $total,
+		'converted'        => $converted,
+		'open'             => $total - $converted,
+		'rate'             => $rate,
+		'revenue'          => $rev,
+		'rows'             => array_slice( $rows, 0, 10 ),
+		'open_rows'        => array_slice( $open_rows, 0, 12 ),
+	);
+}
+
+/**
+ * Customers who can be nudged — the actionable revenue list. Combines: samples
+ * sent but not converted, high-value quotes/saved designs that never ordered,
+ * and delivered one-off buyers ripe for a repeat/referral.
+ */
+function s365_bos_nudges( $orders, $conversions, $kpis ) {
+	$sym = function_exists( 'get_woocommerce_currency_symbol' ) ? get_woocommerce_currency_symbol() : '£';
+	$buyer_emails = array();
+	$buyer_orders = array(); // email => ['count','last','name','status']
+	foreach ( $orders as $o ) {
+		if ( function_exists( 's365_order_has_shutter' ) && ! s365_order_has_shutter( $o ) ) {
+			continue;
+		}
+		$email = strtolower( (string) $o->get_billing_email() );
+		if ( ! $email ) {
+			continue;
+		}
+		$buyer_emails[ $email ] = true;
+		$created = $o->get_date_created() ? $o->get_date_created()->getTimestamp() : 0;
+		if ( ! isset( $buyer_orders[ $email ] ) ) {
+			$buyer_orders[ $email ] = array( 'count' => 0, 'last' => 0, 'name' => trim( $o->get_billing_first_name() . ' ' . $o->get_billing_last_name() ), 'status' => $o->get_status() );
+		}
+		$buyer_orders[ $email ]['count']++;
+		if ( $created > $buyer_orders[ $email ]['last'] ) {
+			$buyer_orders[ $email ]['last']   = $created;
+			$buyer_orders[ $email ]['status'] = $o->get_status();
+		}
+	}
+
+	$rows = array();
+	$now  = current_time( 'timestamp' );
+
+	// 1) Samples sent, not yet converted.
+	foreach ( ( isset( $conversions['open_rows'] ) ? $conversions['open_rows'] : array() ) as $s ) {
+		$rows[] = array(
+			'name'   => $s['name'] ? $s['name'] : '—',
+			'email'  => $s['email'],
+			'reason' => 'Sample sent ' . (int) $s['since'] . 'd ago — no order yet',
+			'action' => 'Send a “finish your order” nudge',
+			'value'  => 0,
+			'type'   => 'sample',
+		);
+	}
+
+	// 2) High-value quotes / saved designs that never converted.
+	if ( function_exists( 'get_posts' ) ) {
+		$leads = get_posts( array(
+			'post_type'      => 's365_lead',
+			'post_status'    => 'private',
+			'posts_per_page' => 200,
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+			'fields'         => 'ids',
+		) );
+		$seen = array();
+		foreach ( $leads as $pid ) {
+			$type = get_post_meta( $pid, '_s365_type', true );
+			if ( ! in_array( $type, array( 'price_estimate', 'saved_design' ), true ) ) {
+				continue;
+			}
+			$email = strtolower( (string) get_post_meta( $pid, '_s365_email', true ) );
+			if ( ! $email || isset( $buyer_emails[ $email ] ) || isset( $seen[ $email ] ) ) {
+				continue;
+			}
+			$price          = (float) preg_replace( '/[^0-9.]/', '', (string) get_post_meta( $pid, '_s365_price', true ) );
+			$seen[ $email ] = true;
+			$rows[]         = array(
+				'name'   => get_post_meta( $pid, '_s365_name', true ) ? get_post_meta( $pid, '_s365_name', true ) : '—',
+				'email'  => $email,
+				'reason' => $price ? ( 'Quoted ' . $sym . number_format( $price, 0 ) . ' — not ordered' ) : 'Saved a design — not ordered',
+				'action' => 'Follow up on the quote',
+				'value'  => $price,
+				'type'   => 'quote',
+			);
+		}
+	}
+
+	// 3) Delivered one-off buyers → repeat / referral.
+	foreach ( $buyer_orders as $email => $b ) {
+		if ( 1 === $b['count'] && 'completed' === $b['status'] && $b['last'] && ( $now - $b['last'] ) > 30 * DAY_IN_SECONDS ) {
+			$rows[] = array(
+				'name'   => $b['name'] ? $b['name'] : '—',
+				'email'  => $email,
+				'reason' => 'Delivered ' . (int) floor( ( $now - $b['last'] ) / DAY_IN_SECONDS ) . 'd ago — one order',
+				'action' => 'Ask for a review, referral or next room',
+				'value'  => 0,
+				'type'   => 'repeat',
+			);
+		}
+	}
+
+	usort( $rows, function ( $a, $b ) {
+		return $b['value'] <=> $a['value'];
+	} );
+
+	$summary = array( 'samples' => 0, 'quotes' => 0, 'quotes_value' => 0.0, 'repeat' => 0 );
+	foreach ( $rows as $r ) {
+		if ( 'sample' === $r['type'] ) {
+			$summary['samples']++;
+		} elseif ( 'quote' === $r['type'] ) {
+			$summary['quotes']++;
+			$summary['quotes_value'] += $r['value'];
+		} elseif ( 'repeat' === $r['type'] ) {
+			$summary['repeat']++;
+		}
+	}
+
+	$sample = empty( $rows );
+	if ( $sample ) {
+		$rows = array(
+			array( 'name' => 'Priya Shah', 'email' => 'priya•••@gmail.com', 'reason' => 'Quoted £2,480 — not ordered', 'action' => 'Follow up on the quote', 'value' => 2480, 'type' => 'quote' ),
+			array( 'name' => 'Mark Ellis', 'email' => 'mark•••@gmail.com', 'reason' => 'Quoted £1,760 — not ordered', 'action' => 'Follow up on the quote', 'value' => 1760, 'type' => 'quote' ),
+			array( 'name' => 'Laura Innes', 'email' => 'laura•••@gmail.com', 'reason' => 'Sample sent 12d ago — no order yet', 'action' => 'Send a “finish your order” nudge', 'value' => 0, 'type' => 'sample' ),
+			array( 'name' => 'Owen Clarke', 'email' => 'owen•••@gmail.com', 'reason' => 'Delivered 48d ago — one order', 'action' => 'Ask for a review, referral or next room', 'value' => 0, 'type' => 'repeat' ),
+		);
+		$summary = array( 'samples' => 7, 'quotes' => 9, 'quotes_value' => 16240, 'repeat' => 14 );
+	}
+
+	return array( 'sample' => $sample, 'rows' => array_slice( $rows, 0, 14 ), 'summary' => $summary );
+}
+
+/**
+ * Plain-English insights derived across the other sections — the "what should I
+ * notice today" strip.
+ */
+function s365_bos_insights( $ctx ) {
+	$sym = function_exists( 'get_woocommerce_currency_symbol' ) ? get_woocommerce_currency_symbol() : '£';
+	$m   = function ( $n ) use ( $sym ) {
+		return $sym . number_format( (float) $n, 0 );
+	};
+	$out = array();
+
+	$k = $ctx['kpis'];
+	if ( null !== $k['revenue_change'] ) {
+		$up    = $k['revenue_change'] >= 0;
+		$out[] = array( 'tone' => $up ? 'good' : 'bad', 'text' => sprintf( 'Revenue is %s %s%% on last month (%s vs %s).', $up ? 'up' : 'down', number_format( abs( $k['revenue_change'] ), 1 ), $m( $k['revenue_month'] ), $m( $k['revenue_prev'] ) ) );
+	}
+	$c = $ctx['conversions'];
+	$out[] = array( 'tone' => 'good', 'text' => sprintf( '%d%% of sample customers went on to buy — %s in orders so far.', round( $c['rate'] ), $m( $c['revenue'] ) ) );
+
+	if ( ! empty( $ctx['cities']['rows'] ) ) {
+		$top   = $ctx['cities']['rows'][0];
+		$out[] = array( 'tone' => 'info', 'text' => sprintf( '%s is your strongest area — %d orders, %s.', $top['label'], $top['orders'], $m( $top['revenue'] ) ) );
+	}
+	$n = $ctx['nudges']['summary'];
+	if ( ( $n['quotes'] + $n['samples'] + $n['repeat'] ) > 0 ) {
+		$out[] = array( 'tone' => 'opp', 'text' => sprintf( '%d quotes (%s), %d samples and %d past customers are waiting for a nudge — see Growth.', $n['quotes'], $m( $n['quotes_value'] ), $n['samples'], $n['repeat'] ) );
+	}
+	$d = $ctx['delayed'];
+	if ( ! empty( $d['rows'] ) && empty( $d['sample'] ) ) {
+		$cnt   = count( $d['rows'] );
+		$out[] = array( 'tone' => 'warn', 'text' => sprintf( '%d order%s running late — check Delivery risk.', $cnt, 1 === $cnt ? ' is' : 's are' ) );
+	}
+	$out[] = array( 'tone' => 'info', 'text' => sprintf( 'Gross margin is running at %d%% (%s profit this month).', round( $ctx['margin']['gross_pct'] ), $m( $ctx['margin']['gross'] ) ) );
+
+	return array( 'rows' => $out );
 }
 
 /**
