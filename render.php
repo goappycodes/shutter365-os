@@ -3,8 +3,10 @@
  * Shutters365 Business OS — view.
  *
  * Renders the standalone dashboard document from the payload built in data.php.
- * All output is escaped; sample sections are badged so nothing projected reads
- * as a confirmed figure.
+ * The functions are split across tabs (Overview, Delivery risk, Leads,
+ * Analytics, Margin, Vendor, Support); only one panel shows at a time. All
+ * output is escaped; sample sections are badged so nothing projected reads as a
+ * confirmed figure.
  *
  * @package Shutters365\BusinessOS
  */
@@ -70,15 +72,25 @@ function s365_bos_render_page( $data ) {
 	$user    = wp_get_current_user();
 	$name    = $user ? ( $user->first_name ? $user->first_name : $user->display_name ) : 'there';
 	$updated = isset( $data['generated'] ) ? date_i18n( 'j M Y, H:i', $data['generated'] ) : '';
+	$since   = isset( $data['report_start'] ) ? date_i18n( 'j M Y', $data['report_start'] ) : '';
 	$k       = $data['kpis'];
 
-	// Delta rendering for revenue.
 	$delta_html = '';
 	if ( null !== $k['revenue_change'] ) {
 		$up   = $k['revenue_change'] >= 0;
 		$delta_html = '<span class="delta ' . ( $up ? 'up' : 'down' ) . '">' . ( $up ? '▲' : '▼' ) . ' '
 			. esc_html( number_format( abs( $k['revenue_change'] ), 1 ) ) . '%</span>';
 	}
+
+	$tabs = array(
+		'overview'  => 'Overview',
+		'risk'      => 'Delivery risk',
+		'leads'     => 'Leads',
+		'analytics' => 'Analytics',
+		'margin'    => 'Margin',
+		'vendor'    => 'Vendor',
+		'support'   => 'Support',
+	);
 	?>
 <!doctype html>
 <html lang="en">
@@ -107,9 +119,10 @@ body{
 h1,h2,h3{margin:0;letter-spacing:-.01em}
 a{color:var(--brand)}
 .tnum{font-variant-numeric:tabular-nums}
+[hidden]{display:none!important}
 
 /* top bar */
-.topbar{position:sticky;top:0;z-index:30;background:rgba(243,239,232,.92);backdrop-filter:saturate(1.2) blur(8px);border-bottom:1px solid var(--line)}
+.topbar{position:sticky;top:0;z-index:30;background:rgba(243,239,232,.94);backdrop-filter:saturate(1.2) blur(8px);border-bottom:1px solid var(--line)}
 .topbar-in{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0}
 .brand{display:flex;align-items:center;gap:12px}
 .brand .mark{width:30px;height:30px;border:2px solid var(--brand);border-radius:7px;position:relative;flex:0 0 auto}
@@ -118,20 +131,24 @@ a{color:var(--brand)}
 .brand .mark::after{top:10px;left:2px;right:2px;height:2px}
 .brand b{font-size:16px;font-weight:700}
 .brand span{color:var(--slate-2);font-size:12px;letter-spacing:.14em;text-transform:uppercase;display:block;margin-top:-2px}
-.topbar-actions{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--slate)}
+.topbar-actions{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--slate);flex-wrap:wrap;justify-content:flex-end}
+.period{font-size:11.5px;font-weight:600;color:var(--brand-ink);background:#fbeceb;border:1px solid #f0d7d4;padding:4px 10px;border-radius:999px;white-space:nowrap}
 .btn{display:inline-flex;align-items:center;gap:7px;padding:8px 13px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink);text-decoration:none;font-size:13px;font-weight:600;box-shadow:var(--shadow)}
 .btn:hover{border-color:var(--brand)}
 .btn-ghost{box-shadow:none;background:transparent}
 
-/* section nav */
-.subnav{display:flex;gap:6px;overflow-x:auto;padding:12px 0 0}
-.subnav a{white-space:nowrap;font-size:13px;color:var(--slate);text-decoration:none;padding:7px 12px;border-radius:999px;font-weight:600}
-.subnav a:hover{background:var(--line-2);color:var(--ink)}
+/* tabs */
+.tabs{display:flex;gap:2px;overflow-x:auto;padding:4px 0 0;scrollbar-width:thin}
+.tab{white-space:nowrap;font-size:13.5px;color:var(--slate);background:transparent;border:0;border-bottom:2px solid transparent;padding:10px 15px;font-weight:600;cursor:pointer;font-family:inherit}
+.tab:hover{color:var(--ink)}
+.tab.active{color:var(--brand);border-bottom-color:var(--brand)}
+.tab:focus-visible{outline:2px solid var(--brand);outline-offset:-2px;border-radius:6px}
 
-/* headings */
-.section{padding:26px 0 4px}
-.sec-h{display:flex;align-items:baseline;gap:10px;margin:0 0 14px}
-.sec-h h2{font-size:15px;text-transform:uppercase;letter-spacing:.12em;color:var(--slate)}
+/* panels */
+.panel{padding:24px 0 4px}
+.panel-h{display:flex;align-items:baseline;gap:10px;margin:0 0 16px}
+.panel-h h2{font-size:18px;font-weight:800;letter-spacing:-.01em}
+.panel-h .sub{font-size:13px;color:var(--slate-2)}
 .badge{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:3px 8px;border-radius:6px}
 .badge-sample{background:var(--amber-bg);color:var(--amber)}
 
@@ -150,7 +167,7 @@ a{color:var(--brand)}
 .grid{display:grid;gap:16px}
 .g-2{grid-template-columns:1.4fr 1fr}
 .g-2e{grid-template-columns:1fr 1fr}
-.g-3{grid-template-columns:1fr 1fr 1fr}
+.mt{margin-top:16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:18px 18px}
 .card h3{font-size:15px;font-weight:700;margin-bottom:3px}
 .card .hint{font-size:12px;color:var(--slate-2);margin-bottom:14px}
@@ -184,7 +201,6 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .tag{font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap}
 .tag.due{background:var(--amber-bg);color:var(--amber)}
 .tag.paid{background:var(--green-bg);color:var(--green)}
-.tag.crit{background:var(--red-bg);color:var(--red)}
 .pill-over{font-weight:800;color:var(--red)}
 
 /* donut */
@@ -195,7 +211,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .donut-legend .dot{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
 .donut-legend b{color:var(--ink);font-variant-numeric:tabular-nums}
 
-/* misc lists */
+/* misc */
 .mini{display:flex;flex-direction:column;gap:10px}
 .mini-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13.5px}
 .mini-row .who{color:var(--slate)}
@@ -204,11 +220,10 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .stat-inline{display:flex;gap:22px;flex-wrap:wrap;margin-top:4px}
 .stat-inline .s b{display:block;font-size:22px;font-weight:800;letter-spacing:-.01em}
 .stat-inline .s span{font-size:12px;color:var(--slate-2);text-transform:uppercase;letter-spacing:.06em}
-
 .note{font-size:12px;color:var(--slate-2);margin-top:10px;font-style:italic}
 footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:center}
 
-@media (max-width:1080px){ .kpis{grid-template-columns:repeat(3,1fr)} .g-2,.g-2e,.g-3{grid-template-columns:1fr} }
+@media (max-width:1080px){ .kpis{grid-template-columns:repeat(3,1fr)} .g-2,.g-2e{grid-template-columns:1fr} }
 @media (max-width:640px){ .kpis{grid-template-columns:repeat(2,1fr)} .bar-row{grid-template-columns:110px 1fr auto} .pipe-row{grid-template-columns:96px 1fr 40px} }
 </style>
 </head>
@@ -222,106 +237,60 @@ footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:cent
         <div><b>Shutters365</b><span>Business OS</span></div>
       </div>
       <div class="topbar-actions">
+        <?php if ( $since ) : ?><span class="period">Orders since <?php echo esc_html( $since ); ?></span><?php endif; ?>
         <span>Hi <?php echo esc_html( $name ); ?> · <span class="tnum"><?php echo esc_html( $updated ); ?></span></span>
         <a class="btn" href="?refresh=1" title="Rebuild from live data">↻ Refresh</a>
         <a class="btn btn-ghost" href="<?php echo esc_url( admin_url() ); ?>">wp-admin</a>
       </div>
     </div>
-    <nav class="subnav">
-      <a href="#overview">Overview</a>
-      <a href="#pipeline">Pipeline</a>
-      <a href="#risk">Delivery risk</a>
-      <a href="#leads">Leads</a>
-      <a href="#analytics">Analytics</a>
-      <a href="#margin">Margin</a>
-      <a href="#vendor">Vendor</a>
-      <a href="#support">Support</a>
-    </nav>
+    <div class="tabs" role="tablist">
+      <?php foreach ( $tabs as $id => $label ) : ?>
+        <button class="tab<?php echo 'overview' === $id ? ' active' : ''; ?>" role="tab" data-tab="<?php echo esc_attr( $id ); ?>" aria-selected="<?php echo 'overview' === $id ? 'true' : 'false'; ?>"><?php echo esc_html( $label ); ?></button>
+      <?php endforeach; ?>
+    </div>
   </div>
 </div>
 
 <div class="wrap">
 
   <!-- OVERVIEW -->
-  <section class="section" id="overview">
-    <div class="sec-h"><h2>This month at a glance</h2><?php echo s365_bos_badge( $k['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+  <section class="panel" id="tab-overview" role="tabpanel">
+    <div class="panel-h"><h2>This month at a glance</h2><?php echo s365_bos_badge( $k['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
     <div class="kpis">
       <div class="kpi hero">
         <div class="lab">Revenue · this month</div>
         <div class="num tnum"><?php echo esc_html( s365_bos_money( $k['revenue_month'], $cur ) ); ?></div>
         <div class="sub"><?php echo $delta_html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?> vs <?php echo esc_html( s365_bos_money( $k['revenue_prev'], $cur ) ); ?> last month</div>
       </div>
-      <div class="kpi">
-        <div class="lab">Orders</div>
-        <div class="num tnum"><?php echo esc_html( $k['orders_month'] ); ?></div>
-        <div class="sub">this month</div>
-      </div>
-      <div class="kpi">
-        <div class="lab">Avg order value</div>
-        <div class="num tnum"><?php echo esc_html( s365_bos_money( $k['aov'], $cur ) ); ?></div>
-        <div class="sub">per order</div>
-      </div>
-      <div class="kpi">
-        <div class="lab">In production</div>
-        <div class="num tnum"><?php echo esc_html( $k['wip'] ); ?></div>
-        <div class="sub">active orders</div>
-      </div>
-      <div class="kpi">
-        <div class="lab">New leads</div>
-        <div class="num tnum"><?php echo esc_html( $data['leads']['this_month'] ); ?></div>
-        <div class="sub">this month</div>
-      </div>
-      <div class="kpi">
-        <div class="lab">Gross margin</div>
-        <div class="num tnum"><?php echo esc_html( round( $data['margin']['gross_pct'] ) ); ?>%</div>
-        <div class="sub"><?php echo $data['margin']['estimated'] ? 'estimated' : 'actual'; ?></div>
-      </div>
+      <div class="kpi"><div class="lab">Orders</div><div class="num tnum"><?php echo esc_html( $k['orders_month'] ); ?></div><div class="sub">this month</div></div>
+      <div class="kpi"><div class="lab">Avg order value</div><div class="num tnum"><?php echo esc_html( s365_bos_money( $k['aov'], $cur ) ); ?></div><div class="sub">per order</div></div>
+      <div class="kpi"><div class="lab">In production</div><div class="num tnum"><?php echo esc_html( $k['wip'] ); ?></div><div class="sub">active orders</div></div>
+      <div class="kpi"><div class="lab">New leads</div><div class="num tnum"><?php echo esc_html( $data['leads']['this_month'] ); ?></div><div class="sub">this month</div></div>
+      <div class="kpi"><div class="lab">Gross margin</div><div class="num tnum"><?php echo esc_html( round( $data['margin']['gross_pct'] ) ); ?>%</div><div class="sub"><?php echo $data['margin']['estimated'] ? 'estimated' : 'actual'; ?></div></div>
     </div>
-  </section>
-
-  <!-- PIPELINE -->
-  <section class="section" id="pipeline">
-    <div class="grid g-2">
-      <div class="card">
-        <div class="card-h"><h3>Order pipeline</h3><?php echo s365_bos_badge( $data['pipeline']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
-        <?php
-        $max = 1;
-        foreach ( $data['pipeline']['rows'] as $r ) {
+    <div class="card mt">
+      <div class="card-h"><h3>Order pipeline</h3><?php echo s365_bos_badge( $data['pipeline']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+      <?php
+      $max = 1;
+      foreach ( $data['pipeline']['rows'] as $r ) {
 			$max = max( $max, $r['count'] ); }
-        echo '<div class="pipe">';
-        foreach ( $data['pipeline']['rows'] as $r ) {
+      echo '<div class="pipe">';
+      foreach ( $data['pipeline']['rows'] as $r ) {
 			$pct = round( ( $r['count'] / $max ) * 100 );
 			echo '<div class="pipe-row"><span class="st">' . esc_html( $r['label'] ) . '</span>'
 				. '<span class="pipe-track"><span class="pipe-fill" style="width:' . esc_attr( max( 2, $pct ) ) . '%"></span></span>'
 				. '<span class="c tnum">' . esc_html( $r['count'] ) . '</span></div>';
 		}
-        echo '</div>';
-        ?>
-        <p class="note">Counts are live from WooCommerce order statuses — Design → Manufacturing → In transit → With courier → Delivered.</p>
-      </div>
-      <div class="card">
-        <div class="card-h"><h3>Lead funnel</h3><?php echo s365_bos_badge( $data['leads']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
-        <?php
-        $lmax = 1;
-        foreach ( $data['leads']['by_type'] as $r ) {
-			$lmax = max( $lmax, $r['count'] ); }
-        foreach ( $data['leads']['by_type'] as $r ) {
-			echo s365_bos_bar( $r['label'], $r['count'], $lmax, (string) $r['count'], 'green' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-		}
-        ?>
-        <div class="stat-inline">
-          <div class="s"><b class="tnum"><?php echo esc_html( $data['leads']['total'] ); ?></b><span>total leads</span></div>
-          <div class="s"><b class="tnum"><?php echo esc_html( $data['leads']['this_month'] ); ?></b><span>this month</span></div>
-        </div>
-      </div>
+      echo '</div>';
+      ?>
+      <p class="note">Live from WooCommerce order statuses — Design → Manufacturing → In transit → With courier → Delivered.</p>
     </div>
   </section>
 
   <!-- DELIVERY RISK -->
-  <section class="section" id="risk">
+  <section class="panel" id="tab-risk" role="tabpanel" hidden>
+    <div class="panel-h"><h2>Orders at delivery risk</h2><span class="sub">active orders past the expected time for their stage</span><?php echo s365_bos_badge( $data['delayed']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
     <div class="card">
-      <div class="card-h"><h3>Orders at delivery risk</h3><?php echo s365_bos_badge( $data['delayed']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
-      <p class="hint">Active orders that have overrun the expected time for their stage. Worst overrun first.</p>
       <table>
         <thead><tr><th>Order</th><th>Customer</th><th>Stage</th><th class="num">Days in stage</th><th class="num">Over by</th><th class="num">Value</th></tr></thead>
         <tbody>
@@ -341,30 +310,47 @@ footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:cent
     </div>
   </section>
 
-  <!-- LEADS RECENT -->
-  <section class="section" id="leads">
-    <div class="card">
-      <div class="card-h"><h3>Latest leads</h3><?php echo s365_bos_badge( $data['leads']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
-      <table>
-        <thead><tr><th>Source</th><th>Name</th><th>Email</th><th class="num">Est. quote</th><th class="num">When</th></tr></thead>
-        <tbody>
-        <?php foreach ( $data['leads']['recent'] as $r ) : ?>
-          <tr>
-            <td><?php echo esc_html( $r['type'] ); ?></td>
-            <td><?php echo esc_html( $r['name'] ? $r['name'] : '—' ); ?></td>
-            <td><?php echo esc_html( $r['email'] ); ?></td>
-            <td class="num tnum"><?php echo $r['price'] ? esc_html( $cur . $r['price'] ) : '—'; ?></td>
-            <td class="num"><?php echo esc_html( $r['ago'] ); ?> ago</td>
-          </tr>
-        <?php endforeach; ?>
-        </tbody>
-      </table>
+  <!-- LEADS -->
+  <section class="panel" id="tab-leads" role="tabpanel" hidden>
+    <div class="panel-h"><h2>Leads</h2><?php echo s365_bos_badge( $data['leads']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+    <div class="grid g-2e">
+      <div class="card">
+        <div class="card-h"><h3>Lead funnel by source</h3></div>
+        <?php
+        $lmax = 1;
+        foreach ( $data['leads']['by_type'] as $r ) {
+			$lmax = max( $lmax, $r['count'] ); }
+        foreach ( $data['leads']['by_type'] as $r ) {
+			echo s365_bos_bar( $r['label'], $r['count'], $lmax, (string) $r['count'], 'green' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		}
+        ?>
+        <div class="stat-inline">
+          <div class="s"><b class="tnum"><?php echo esc_html( $data['leads']['total'] ); ?></b><span>total leads</span></div>
+          <div class="s"><b class="tnum"><?php echo esc_html( $data['leads']['this_month'] ); ?></b><span>this month</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-h"><h3>Latest leads</h3></div>
+        <table>
+          <thead><tr><th>Source</th><th>Name</th><th class="num">Est. quote</th><th class="num">When</th></tr></thead>
+          <tbody>
+          <?php foreach ( $data['leads']['recent'] as $r ) : ?>
+            <tr>
+              <td><?php echo esc_html( $r['type'] ); ?></td>
+              <td><?php echo esc_html( $r['name'] ? $r['name'] : '—' ); ?></td>
+              <td class="num tnum"><?php echo $r['price'] ? esc_html( $cur . $r['price'] ) : '—'; ?></td>
+              <td class="num"><?php echo esc_html( $r['ago'] ); ?> ago</td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
     </div>
   </section>
 
   <!-- ANALYTICS -->
-  <section class="section" id="analytics">
-    <div class="sec-h"><h2>Analytics</h2></div>
+  <section class="panel" id="tab-analytics" role="tabpanel" hidden>
+    <div class="panel-h"><h2>Analytics</h2><span class="sub">orders since <?php echo esc_html( $since ); ?></span></div>
     <div class="grid g-2e">
       <div class="card">
         <div class="card-h"><h3>Top-selling shutters</h3><?php echo s365_bos_badge( $data['products']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
@@ -382,7 +368,7 @@ footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:cent
         <?php echo s365_bos_donut( $data['materials']['rows'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
       </div>
     </div>
-    <div class="grid g-2e" style="margin-top:16px">
+    <div class="grid g-2e mt">
       <div class="card">
         <div class="card-h"><h3>Top customers</h3><?php echo s365_bos_badge( $data['customers']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
         <table>
@@ -414,9 +400,9 @@ footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:cent
   </section>
 
   <!-- MARGIN -->
-  <section class="section" id="margin">
+  <section class="panel" id="tab-margin" role="tabpanel" hidden>
+    <div class="panel-h"><h2>Margin this month</h2><?php echo s365_bos_badge( $data['margin']['estimated'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
     <div class="card">
-      <div class="card-h"><h3>Margin this month</h3><?php echo s365_bos_badge( $data['margin']['estimated'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
       <div class="stat-inline" style="gap:34px">
         <div class="s"><b class="tnum"><?php echo esc_html( s365_bos_money( $data['margin']['revenue'], $cur ) ); ?></b><span>revenue</span></div>
         <div class="s"><b class="tnum" style="color:var(--amber)"><?php echo esc_html( s365_bos_money( $data['margin']['cogs'], $cur ) ); ?></b><span>cost of goods</span></div>
@@ -424,15 +410,16 @@ footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:cent
         <div class="s"><b class="tnum"><?php echo esc_html( round( $data['margin']['gross_pct'] ) ); ?>%</b><span>gross margin</span></div>
         <div class="s"><b class="tnum"><?php echo esc_html( s365_bos_money( $data['margin']['avg_margin'], $cur ) ); ?></b><span>avg profit / order</span></div>
       </div>
-      <p class="note">Cost of goods is estimated at <?php echo esc_html( round( s365_bos_margin_rate() * 100 ) ); ?>% margin until per-product supplier costs are entered — then this becomes exact, per sale.</p>
+      <p class="note">Cost of goods is estimated at <?php echo esc_html( round( ( 1 - s365_bos_margin_rate() ) * 100 ) ); ?>% of price (<?php echo esc_html( round( s365_bos_margin_rate() * 100 ) ); ?>% margin) until per-product supplier costs are entered — then this becomes exact, per sale.</p>
     </div>
   </section>
 
   <!-- VENDOR -->
-  <section class="section" id="vendor">
+  <section class="panel" id="tab-vendor" role="tabpanel" hidden>
+    <div class="panel-h"><h2>Vendor &amp; payments</h2><?php echo s365_bos_badge( $data['vendor']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
     <div class="grid g-2">
       <div class="card">
-        <div class="card-h"><h3>Vendor purchase orders</h3><?php echo s365_bos_badge( $data['vendor']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+        <div class="card-h"><h3>Purchase orders</h3></div>
         <table>
           <thead><tr><th>PO</th><th>Order</th><th class="num">Vendor cost</th><th class="num">Status</th></tr></thead>
           <tbody>
@@ -460,9 +447,9 @@ footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:cent
   </section>
 
   <!-- SUPPORT -->
-  <section class="section" id="support">
+  <section class="panel" id="tab-support" role="tabpanel" hidden>
+    <div class="panel-h"><h2>Support &amp; customer requests</h2><?php echo s365_bos_badge( $data['support']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
     <div class="card">
-      <div class="card-h"><h3>Support &amp; customer requests</h3><?php echo s365_bos_badge( $data['support']['sample'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
       <div class="mini">
       <?php foreach ( $data['support']['rows'] as $r ) : ?>
         <div class="mini-row">
@@ -476,11 +463,33 @@ footer{padding:34px 0 50px;color:var(--slate-2);font-size:12.5px;text-align:cent
   </section>
 
   <footer>
-    Shutters365 Business OS · data from WooCommerce + the lead CRM on this server ·
+    Shutters365 Business OS · orders placed on/after <?php echo esc_html( $since ); ?> · live WooCommerce + lead CRM data ·
     sections marked <span class="badge badge-sample">Sample</span> are illustrative until that data is captured.
   </footer>
 
 </div>
+
+<script>
+(function(){
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('[data-tab]'));
+  var panels = Array.prototype.slice.call(document.querySelectorAll('.panel'));
+  function show(id){
+    var found = false;
+    panels.forEach(function(p){ var on = (p.id === 'tab-' + id); p.hidden = !on; if(on){found=true;} });
+    tabs.forEach(function(t){ var on = (t.getAttribute('data-tab') === id); t.classList.toggle('active', on); t.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    return found;
+  }
+  tabs.forEach(function(t){
+    t.addEventListener('click', function(){
+      var id = t.getAttribute('data-tab');
+      show(id);
+      try { history.replaceState(null, '', '#' + id); } catch(e){}
+    });
+  });
+  var initial = (location.hash || '').replace('#','');
+  if(!initial || !show(initial)){ show('overview'); }
+})();
+</script>
 </body>
 </html>
 	<?php

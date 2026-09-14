@@ -23,6 +23,14 @@ function s365_bos_margin_rate() {
 	return (float) apply_filters( 's365_bos_margin_rate', 0.55 );
 }
 
+/**
+ * Reporting-period start. Only orders placed on/after this date are counted
+ * anywhere in the dashboard. Fixed at 1 July 2026; filterable to move it.
+ */
+function s365_bos_report_start() {
+	return (int) apply_filters( 's365_bos_report_start', strtotime( '2026-07-01 00:00:00' ) );
+}
+
 /** Paid / revenue-recognised statuses (Woo core + our custom fulfilment ones). */
 function s365_bos_paid_statuses() {
 	$paid = function_exists( 'wc_get_is_paid_statuses' ) ? wc_get_is_paid_statuses() : array( 'processing', 'completed' );
@@ -52,7 +60,7 @@ function s365_bos_stage_sla() {
  * the loader) to rebuild.
  */
 function s365_bos_payload( $force = false ) {
-	$key = 's365_bos_payload_v1';
+	$key = 's365_bos_payload_v2';
 	if ( ! $force ) {
 		$cached = get_transient( $key );
 		if ( is_array( $cached ) ) {
@@ -69,7 +77,7 @@ function s365_bos_build() {
 	$now          = current_time( 'timestamp' );
 	$month_start  = strtotime( gmdate( 'Y-m-01 00:00:00', $now ) );
 	$prev_start   = strtotime( '-1 month', $month_start );
-	$window_start = strtotime( '-180 days', $now );
+	$window_start = s365_bos_report_start(); // fixed floor: 1 July 2026 onwards
 
 	$orders = s365_bos_window_orders( $window_start );
 
@@ -82,8 +90,9 @@ function s365_bos_build() {
 	$currency = function_exists( 'get_woocommerce_currency_symbol' ) ? get_woocommerce_currency_symbol() : '£';
 
 	return array(
-		'generated'  => $now,
-		'currency'   => $currency,
+		'generated'    => $now,
+		'report_start' => $window_start,
+		'currency'     => $currency,
 		'kpis'       => $kpis,
 		'pipeline'   => s365_bos_pipeline(),
 		'delayed'    => s365_bos_delayed_orders(),
@@ -173,11 +182,12 @@ function s365_bos_count_status( $status ) {
 		return 0;
 	}
 	$res = wc_get_orders( array(
-		'status'   => $status,
-		'limit'    => 1,
-		'paginate' => true,
-		'return'   => 'ids',
-		'type'     => 'shop_order',
+		'status'       => $status,
+		'limit'        => 1,
+		'paginate'     => true,
+		'return'       => 'ids',
+		'type'         => 'shop_order',
+		'date_created' => '>=' . s365_bos_report_start(),
 	) );
 	return is_object( $res ) && isset( $res->total ) ? (int) $res->total : 0;
 }
@@ -220,11 +230,12 @@ function s365_bos_delayed_orders() {
 
 	if ( function_exists( 'wc_get_orders' ) ) {
 		$orders = wc_get_orders( array(
-			'limit'   => 200,
-			'status'  => array_keys( $sla ),
-			'orderby' => 'modified',
-			'order'   => 'ASC',
-			'type'    => 'shop_order',
+			'limit'        => 200,
+			'status'       => array_keys( $sla ),
+			'orderby'      => 'modified',
+			'order'        => 'ASC',
+			'type'         => 'shop_order',
+			'date_created' => '>=' . s365_bos_report_start(),
 		) );
 		foreach ( (array) $orders as $order ) {
 			$status = $order->get_status();
@@ -557,11 +568,12 @@ function s365_bos_vendor_ledger( $margin ) {
 
 	if ( function_exists( 'wc_get_orders' ) ) {
 		$orders = wc_get_orders( array(
-			'limit'   => 12,
-			'status'  => array( 's365-mfg', 's365-transit', 's365-courier', 'completed' ),
-			'orderby' => 'date',
-			'order'   => 'DESC',
-			'type'    => 'shop_order',
+			'limit'        => 12,
+			'status'       => array( 's365-mfg', 's365-transit', 's365-courier', 'completed' ),
+			'orderby'      => 'date',
+			'order'        => 'DESC',
+			'type'         => 'shop_order',
+			'date_created' => '>=' . s365_bos_report_start(),
 		) );
 		foreach ( (array) $orders as $i => $order ) {
 			$c    = s365_bos_order_cost( $order );
